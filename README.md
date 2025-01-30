@@ -7,33 +7,39 @@ First, create a `Dockerfile` that sets up the environment and installs all requi
 
 ```dockerfile
 # Use an official CUDA-enabled PyTorch image
-FROM pytorch/pytorch:2.1.0-cuda11.7-base-ubuntu20.04
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as builder
 
-# Set working directory
+RUN apt-get update && \
+    apt-get install -y python3.10 python3.10-distutils python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
+COPY requirements.txt .
+RUN pip install  --no-cache-dir --user -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    ninja-build \
-    && rm -rf /var/lib/apt/lists/*
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
-# Install Python dependencies
-RUN pip install --upgrade pip \
-    transformers==4.21.3 \
-    einops \
-    fastapi \
-    uvicorn \
-    sentence-transformers \
-    && pip install flash-attn --no-build-isolation
+RUN apt-get update && \
+    apt-get install -y python3.10 python3.10-distutils && \
+    useradd -m appuser && \
+    mkdir -p /cache/huggingface && \
+    chown -R appuser:appuser /cache && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy the FastAPI app
-COPY main.py /app/main.py
+COPY --from=builder /root/.local /home/appuser/.local
+COPY . /app
 
-# Expose the port
-EXPOSE 8000
+ENV PATH="/home/appuser/.local/bin:${PATH}" \
+    PYTHONPATH="/app" \
+    CUDA_VISIBLE_DEVICES="0" \
+    TRANSFORMERS_CACHE="/cache/huggingface"
 
-# Run the command to start the FastAPI server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+USER appuser
+
+EXPOSE 8501
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8501"]
+
+
 ```
 
 ### Step 2: Create the FastAPI Application
