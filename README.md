@@ -254,7 +254,7 @@ The API should return the top 3 most relevant documents based on the query. The 
 
 3. **Model Loading**: The model is loaded in evaluation mode and moved to the GPU if available. If no GPU is detected, it will fall back to CPU mode, but performance will be significantly reduced.
 
-4. **API Endpoint**: The API is exposed on port 8000 and can be accessed at `http://localhost:8000/rerank`.
+4. **API Endpoint**: The API is exposed on port 8501 and can be accessed at `http://localhost:8501/rerank`.
 
 5. **Testing**: You can test the API using the provided `curl` command or any HTTP client like Postman.
 
