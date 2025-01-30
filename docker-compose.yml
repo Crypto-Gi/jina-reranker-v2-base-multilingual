@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  reranker-api:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - MODEL_NAME=jinaai/jina-reranker-v2-base-multilingual
+      - TRANSFORMERS_CACHE=/cache/huggingface
+      - HF_TRUST_REMOTE_CODE=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  model-cache:
