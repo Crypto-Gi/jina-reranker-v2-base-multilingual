@@ -1,6 +1,6 @@
 # Jina Re-Ranker API
 
-A FastAPI application that provides endpoints for document re-ranking using the Jina Re-Ranker v2 model.
+A FastAPI based local hosted Docker application that provides endpoints for document re-ranking using the Jina Re-Ranker v2 model.
 
 ## Requirements
 - Docker
