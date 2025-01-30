@@ -48,60 +48,117 @@ Create a file named `main.py` that defines the FastAPI application:
 
 ```python
 from fastapi import FastAPI, HTTPException
-from transformers import AutoModelForSequenceClassification
+from pydantic import BaseModel
+from typing import List, Optional
+from sentence_transformers import CrossEncoder
 import torch
+import asyncio
+import time
+import os
 
 app = FastAPI()
 
-# Load the model
-model = AutoModelForSequenceClassification.from_pretrained(
-    'jinaai/jina-reranker-v2-base-multilingual',
-    torch_dtype="auto",
-    trust_remote_code=True,
+# Security headers
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.update({
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "X-XSS-Protection": "1; mode=block"
+    })
+    return response
+
+# Model configuration
+MODEL_NAME = os.getenv("MODEL_NAME", "jinaai/jina-reranker-v2-base-multilingual")
+MAX_MODEL_LOAD_TIME = 300  # 5 minutes
+model = CrossEncoder(
+    MODEL_NAME,
+    device='cuda' if torch.cuda.is_available() else 'cpu', trust_remote_code=True  # Add this back
 )
 
-# Move the model to the GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = model.to(device)
-model.eval()
 
-@app.post("/rerank")
-async def rerank(
-    data: dict
-):
+class PredictRequest(BaseModel):
+    query: str
+    documents: List[str]
+    batch_size: Optional[int] = 32
+
+class RankRequest(BaseModel):
+    query: str
+    documents: List[str]
+    top_k: Optional[int] = None
+    return_documents: Optional[bool] = True
+    batch_size: Optional[int] = 32
+
+@app.on_event("startup")
+async def initialize_services():
+    await verify_cuda()
+    await load_model()
+
+async def verify_cuda():
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA not available in Docker container")
+    cuda_version = torch.version.cuda
+    if cuda_version != "11.8":
+        raise RuntimeError(f"Wrong CUDA version. Expected 11.8, got {cuda_version}")
+
+async def load_model():
     try:
-        query = data.get("query", "")
-        documents = data.get("documents", [])
-        top_n = data.get("top_n", 3)
-        max_length = data.get("max_length", 1024)
-        
-        if not query or not documents:
-            raise HTTPException(status_code=400, detail="Query and documents are required")
-        
-        # Construct sentence pairs
-        sentence_pairs = [[query, doc] for doc in documents]
-        
-        # Compute scores
-        scores = model.compute_score(sentence_pairs, max_length=max_length)
-        
-        # Combine documents and scores, then sort
-        document_scores = list(zip(documents, scores))
-        document_scores.sort(key=lambda x: x[1], reverse=True)
-        
-        # Return top_n documents
-        top_documents = document_scores[:top_n]
-        
-        return [
-            {"text": doc, "score": score} 
-            for doc, score in top_documents
-        ]
-        
+        if not hasattr(model, 'model') or model.model is None:
+            model.load_model()
+    except Exception as e:
+        raise RuntimeError(f"Model loading failed: {str(e)}")
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "cuda_available": torch.cuda.is_available(),
+        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+        "torch_version": torch.__version__,
+        "model_loaded": hasattr(model, 'model') and model.model is not None,
+        "cache_dir": os.environ.get("TRANSFORMERS_CACHE", "")
+    }
+
+@app.post("/predict")
+async def predict(request: PredictRequest):
+    try:
+        pairs = [[request.query, doc] for doc in request.documents]
+        scores = model.predict(pairs, batch_size=request.batch_size).tolist()
+        return {"scores": scores}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.post("/rank")
+async def rank(request: RankRequest):
+    try:
+        # Create pairs of query and documents
+        pairs = [[request.query, doc] for doc in request.documents]
+        
+        # Get scores using predict method
+        scores = model.predict(pairs, batch_size=request.batch_size)
+        
+        # Create rankings with scores and documents
+        rankings = []
+        scored_docs = list(zip(scores, request.documents))
+        sorted_docs = sorted(scored_docs, key=lambda x: x[0], reverse=True)
+        
+        # Apply top_k if specified
+        if request.top_k:
+            sorted_docs = sorted_docs[:request.top_k]
+        
+        # Format the response
+        rankings = [
+            {
+                "score": float(score),
+                "document": doc if request.return_documents else None
+            }
+            for score, doc in sorted_docs
+        ]
+        
+        return {"rankings": rankings}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 ```
 
 ### Step 3: Create a Docker Compose File
@@ -112,19 +169,34 @@ Create a `docker-compose.yml` file to define and run the container:
 version: '3.8'
 
 services:
-  reranker:
-    build: .
+  reranker-api:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8501:8501"
     environment:
-      - CUDA_VISIBLE_DEVICES=0
+      - MODEL_NAME=jinaai/jina-reranker-v2-base-multilingual
+      - TRANSFORMERS_CACHE=/cache/huggingface
+      - HF_TRUST_REMOTE_CODE=true
     deploy:
       resources:
-        limits:
+        reservations:
           devices:
             - driver: nvidia
-              device: /dev/nvidia0
               count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  model-cache:
 ```
 
 ### Step 4: Build and Run the Container
