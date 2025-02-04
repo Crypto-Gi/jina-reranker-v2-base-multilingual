@@ -213,12 +213,12 @@ docker-compose up
 Once the container is running, you can test the API using the following `curl` command:
 
 ```bash
-curl -X POST http://localhost:8000/rerank \
+curl -X POST http://localhost:8501/rerank \
   -H "Content-Type: application/json" \
   -d '{
     "model": "jina-reranker-v2-base-multilingual",
     "query": "Organic skincare products for sensitive skin",
-    "top_n": 3,
+    "top_k": 3,
     "documents": [
         "Organic skincare for sensitive skin with aloe vera and chamomile.",
         "New makeup trends focus on bold colors and innovative techniques",
