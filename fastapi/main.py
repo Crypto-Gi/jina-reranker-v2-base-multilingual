@@ -83,30 +83,27 @@ async def predict(request: PredictRequest):
 @app.post("/rank")
 async def rank(request: RankRequest):
     try:
-        # Create pairs of query and documents
         pairs = [[request.query, doc] for doc in request.documents]
-        
-        # Get scores using predict method
         scores = model.predict(pairs, batch_size=request.batch_size)
         
-        # Create rankings with scores and documents
-        rankings = []
-        scored_docs = list(zip(scores, request.documents))
-        sorted_docs = sorted(scored_docs, key=lambda x: x[0], reverse=True)
+        # Combine scores with documents and sort
+        scored_docs = sorted(
+            [(float(score), doc) for score, doc in zip(scores, request.documents)],
+            key=lambda x: x[0],
+            reverse=True
+        )
         
-        # Apply top_k if specified
-        if request.top_k:
-            sorted_docs = sorted_docs[:request.top_k]
+        # Apply top_k with default value
+        top_k = request.top_k if request.top_k is not None else 3
+        scored_docs = scored_docs[:top_k]
         
-        # Format the response
-        rankings = [
-            {
-                "score": float(score),
+        # Format response
+        return {
+            "rankings": [{
+                "score": score,
                 "document": doc if request.return_documents else None
-            }
-            for score, doc in sorted_docs
-        ]
+            } for score, doc in scored_docs]
+        }
         
-        return {"rankings": rankings}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
