@@ -28,4 +28,3 @@ services:
     restart: unless-stopped
 
 volumes:
-  model-cache:
