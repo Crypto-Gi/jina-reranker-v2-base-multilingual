@@ -6,7 +6,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install  --no-cache-dir --user -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
+RUN pip install --user -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
 
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
